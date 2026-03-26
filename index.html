@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>2026 안성여고 교육과정 박람회</title>
+    <style>
+        :root { --primary: #1a73e8; --bg: #f8f9fa; --border: #e0e0e0; }
+        * { box-sizing: border-box; }
+        body { font-family: 'Pretendard', sans-serif; margin: 0; display: flex; flex-direction: column; height: 100vh; background: var(--bg); overflow: hidden; }
+
+        header { background: var(--primary); color: white; padding: 10px 15px; display: flex; justify-content: space-between; align-items: center; flex-shrink: 0; }
+        .logo { font-size: 1.1rem; font-weight: bold; }
+        .nav { display: flex; gap: 10px; list-style: none; margin: 0; padding: 0; }
+        .nav li { font-size: 0.85rem; cursor: pointer; padding: 5px 8px; border-radius: 4px; border: 1px solid transparent; }
+        .login-btn { background: white; color: var(--primary); border: none; font-weight: bold; cursor: pointer; }
+
+        main { flex: 1; display: flex; overflow: hidden; flex-direction: row; }
+
+        .column { display: flex; flex-direction: column; background: white; border-right: 1px solid var(--border); transition: all 0.3s ease; }
+        .column-header { background: #eee; padding: 12px; font-weight: bold; font-size: 0.9rem; border-bottom: 1px solid var(--border); }
+        .list-container { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+
+        #col-group { flex: 0 0 160px; }
+        #col-subject { flex: 0 0 220px; background: #fafafa; }
+        #col-detail { flex: 1; border-right: none; }
+
+        .item { padding: 15px 12px; border-bottom: 1px solid #eee; cursor: pointer; font-size: 0.95rem; display: flex; align-items: center; justify-content: space-between; }
+        .item:hover { background: #f1f3f4; }
+        .item.active { background: #e8f0fe; color: var(--primary); font-weight: bold; border-left: 4px solid var(--primary); }
+
+        iframe { width: 100%; height: 100%; border: none; }
+
+        #loading { position: fixed; top:0; left:0; width:100%; height:100%; background:white; display:flex; justify-content:center; align-items:center; z-index:9999; font-weight:bold; flex-direction: column; gap: 10px; }
+
+        @media (max-width: 768px) {
+            main { flex-direction: column; overflow-y: auto; }
+            .column { width: 100%; flex: none; border-right: none; border-bottom: 1px solid var(--border); height: auto; }
+            #col-group, #col-subject { max-height: 250px; }
+            #col-detail { height: 600px; }
+        }
+
+        #login-modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); justify-content: center; align-items: center; z-index: 1000; }
+        .modal-box { background: white; padding: 25px; border-radius: 12px; width: 90%; max-width: 320px; }
+        .modal-box input { width: 100%; padding: 12px; margin: 8px 0; border: 1px solid #ddd; border-radius: 6px; }
+    </style>
+</head>
+<body>
+
+    <div id="loading">
+        <div>데이터를 불러오는 중입니다...</div>
+        <div style="font-size:0.8rem; color:#888;">잠시만 기다려주세요.</div>
+    </div>
+
+    <header>
+        <div class="logo">안성여고 교육과정 박람회</div>
+        <ul class="nav">
+            <li onclick="location.reload()" style="border: 1px solid white;">새로고침</li>
+            <li><button class="login-btn" onclick="openLogin()">로그인</button></li>
+        </ul>
+    </header>
+
+    <main>
+        <section class="column" id="col-group">
+            <div class="column-header">교과군</div>
+            <div id="group-list" class="list-container"></div>
+        </section>
+
+        <section class="column" id="col-subject">
+            <div class="column-header">과목 선택</div>
+            <div id="subject-list" class="list-container">
+                <p style="text-align:center; color:#999; margin-top:30px; font-size:0.8rem;">교과군을 선택하세요.</p>
+            </div>
+        </section>
+
+        <section class="column" id="col-detail">
+            <div class="column-header">과목 상세 안내 (PDF)</div>
+            <iframe id="pdf-view" src="about:blank"></iframe>
+        </section>
+    </main>
+
+    <div id="login-modal">
+        <div class="modal-box">
+            <h3 style="margin:0 0 15px 0">관리자 로그인</h3>
+            <p style="font-size:0.8rem; color:red;">※ 데이터 수정은 구글 시트에서 진행해 주세요.</p>
+            <input type="text" id="uid" placeholder="아이디">
+            <input type="password" id="upw" placeholder="비밀번호">
+            <button style="width:100%; padding:12px; background:#1a73e8; color:white; border:none; border-radius:6px; cursor:pointer;" onclick="doLogin()">로그인</button>
+            <button onclick="closeLogin()" style="width:100%; background:none; border:none; margin-top:10px; color:#666; cursor:pointer;">닫기</button>
+        </div>
+    </div>
+
+    <script>
+        // 🔗 1. 구글 시트 CSV 웹 게시 URL
+        const SHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTDcg_fN_hIBGnVCsZzn3iprxtzdKknxeR9b1cLQykgUSSXe2K5m8-7ph7uJxHPq8sfZ2Nv5aVb4wOe/pub?output=csv";
+
+        let db = []; 
+        let curGroupIdx = null;
+
+        // 2. 데이터 가져오기 및 파싱
+        async function fetchSheetData() {
+            const loadingEl = document.getElementById('loading');
+            try {
+                const response = await fetch(SHEET_CSV_URL);
+                if (!response.ok) throw new Error("네트워크 응답 없음");
+                
+                const csvData = await response.text();
+                
+                // 줄바꿈 처리 및 빈 행 제거
+                const rows = csvData.split(/\r?\n/).filter(row => row.trim() !== "");
+                const groupedData = {};
+
+                // 2행(index 1)부터 데이터 처리
+                for (let i = 1; i < rows.length; i++) {
+                    // CSV 파싱 정규식: 쉼표로 분리하되 따옴표 안의 쉼표는 무시
+                    const cols = rows[i].split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/);
+                    
+                    if (cols.length >= 3) {
+                        const groupName = cols[0].replace(/^"|"$/g, "").trim();   // A: 교과군
+                        const subjectName = cols[1].replace(/^"|"$/g, "").trim(); // B: 과목명
+                        const fileName = cols[2].replace(/^"|"$/g, "").trim();    // C: 파일명
+
+                        if (!groupName || !subjectName) continue;
+
+                        if (!groupedData[groupName]) {
+                            groupedData[groupName] = { name: groupName, subjects: [] };
+                        }
+                        
+                        groupedData[groupName].subjects.push({ 
+                            n: subjectName, 
+                            url: "pdfs/" + fileName 
+                        });
+                    }
+                }
+
+                db = Object.values(groupedData);
+                
+                if (db.length === 0) {
+                    loadingEl.innerHTML = "시트에 데이터가 없거나 형식이 맞지 않습니다.<br>A열:교과군, B열:과목명, C열:파일명을 확인하세요.";
+                } else {
+                    renderGroups();
+                    loadingEl.style.display = 'none';
+                }
+            } catch (error) {
+                console.error("실패:", error);
+                loadingEl.innerText = "데이터 로드 에러: " + error.message;
+            }
+        }
+
+        // 3. 교과군 목록 렌더링
+        function renderGroups() {
+            const container = document.getElementById('group-list');
+            container.innerHTML = db.map((g, i) => `
+                <div class="item ${curGroupIdx === i ? 'active' : ''}" onclick="selectGroup(${i})">
+                    <span>${g.name}</span>
+                    <span>❯</span>
+                </div>
+            `).join('');
+        }
+
+        // 4. 교과군 선택 시 과목 목록 렌더링
+        function selectGroup(idx) {
+            curGroupIdx = idx;
+            renderGroups();
+            const subContainer = document.getElementById('subject-list');
+            subContainer.innerHTML = db[idx].subjects.map((s, si) => `
+                <div class="item" onclick="showPDF('${s.url}', this)">
+                    <span>${s.n}</span>
+                    <span>❯</span>
+                </div>
+            `).join('');
+            
+            // 모바일용 스크롤
+            if(window.innerWidth <= 768) {
+                document.getElementById('col-subject').scrollIntoView({behavior: 'smooth'});
+            }
+        }
+
+        // 5. 과목 선택 시 PDF 표시
+        function showPDF(url, el) {
+            document.querySelectorAll('#subject-list .item').forEach(i => i.classList.remove('active'));
+            el.classList.add('active');
+            document.getElementById('pdf-view').src = url;
+
+            if(window.innerWidth <= 768) {
+                document.getElementById('col-detail').scrollIntoView({behavior: 'smooth'});
+            }
+        }
+
+        function openLogin() { document.getElementById('login-modal').style.display='flex'; }
+        function closeLogin() { document.getElementById('login-modal').style.display='none'; }
+        function doLogin() {
+            if(document.getElementById('uid').value==='admin' && document.getElementById('upw').value==='1234') {
+                alert("관리자 확인되었습니다. 시트에서 수정 후 새로고침하세요.");
+                closeLogin();
+            } else { alert("로그인 실패"); }
+        }
+
+        // 페이지 시작
+        fetchSheetData();
+    </script>
+</body>
+</html>
